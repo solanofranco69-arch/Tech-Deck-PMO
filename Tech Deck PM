@@ -1332,5 +1332,539 @@ def reset_password(token):
     return render_page(body, current_user)
 
 
+WORKER_SHELL = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#040b18">
+  <title>Tech Deck · Field</title>
+  <style>
+    :root {
+      --bg: #040b18;
+      --surface: #0b1428;
+      --card: rgba(15, 25, 48, 0.95);
+      --border: rgba(125, 211, 252, 0.18);
+      --text: #e8f0fe;
+      --muted: #8fa5c0;
+      --accent: #7dd3fc;
+      --accent2: #38bdf8;
+      --danger: #f87171;
+      --success: #4ade80;
+      --r: 16px;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 15px;
+      padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+    /* header */
+    .w-header {
+      position: sticky; top: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px env(safe-area-inset-top, 0);
+      background: rgba(4,11,24,0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .w-header .title { font-size: 1rem; font-weight: 700; color: var(--text); text-decoration: none; }
+    .w-header .subtitle { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+    .logout-btn {
+      padding: 7px 14px; border-radius: 999px; font-size: 0.8rem; font-weight: 600;
+      border: 1px solid var(--border); color: var(--muted);
+      background: transparent; cursor: pointer; text-decoration: none;
+    }
+    /* toast */
+    .toast {
+      margin: 10px 16px 0;
+      padding: 12px 14px; border-radius: var(--r);
+      background: rgba(125,211,252,0.12); border: 1px solid var(--border);
+      color: var(--accent); font-size: 0.88rem;
+    }
+    /* content */
+    .w-body { padding: 16px 16px 96px; max-width: 600px; margin: 0 auto; }
+    /* cards */
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--r); margin-bottom: 12px;
+      overflow: hidden;
+    }
+    .card-head {
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      font-weight: 700; font-size: 0.95rem; display: flex;
+      align-items: center; justify-content: space-between;
+    }
+    .card-body { padding: 14px 16px; }
+    /* project picker */
+    .proj-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      text-decoration: none; color: var(--text);
+    }
+    .proj-item:last-child { border-bottom: none; }
+    .proj-item:active { background: rgba(125,211,252,0.06); }
+    .proj-item .proj-name { font-weight: 600; margin-bottom: 2px; }
+    .proj-item .proj-meta { font-size: 0.8rem; color: var(--muted); }
+    .proj-item .chevron { color: var(--muted); font-size: 1.2rem; }
+    /* tabs */
+    .tab-bar {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+      display: grid; grid-template-columns: 1fr 1fr;
+      background: rgba(4,11,24,0.96); backdrop-filter: blur(12px);
+      border-top: 1px solid var(--border);
+      padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+    .tab-btn {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 10px 0 12px; gap: 4px; font-size: 0.72rem; font-weight: 600;
+      color: var(--muted); text-decoration: none; border: none; background: none;
+      cursor: pointer;
+    }
+    .tab-btn.active { color: var(--accent); }
+    .tab-btn svg { width: 22px; height: 22px; stroke-width: 2; fill: none; stroke: currentColor; }
+    /* form elements */
+    label { display: block; font-size: 0.8rem; font-weight: 600; color: var(--muted); margin-bottom: 5px; }
+    input[type=text], input[type=number], input[type=date], input[type=file], select, textarea {
+      width: 100%; padding: 12px 14px; border-radius: 10px;
+      background: rgba(5,12,26,0.9); border: 1px solid rgba(125,211,252,0.2);
+      color: var(--text); font-size: 0.95rem; outline: none;
+      -webkit-appearance: none; appearance: none;
+    }
+    select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238fa5c0' viewBox='0 0 16 16'%3E%3Cpath d='M7.247 11.14 2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px; }
+    input:focus, select:focus { border-color: rgba(125,211,252,0.5); }
+    .field { margin-bottom: 12px; }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+    .btn {
+      display: block; width: 100%; padding: 14px; border-radius: 12px;
+      font-size: 0.95rem; font-weight: 700; border: none; cursor: pointer;
+      text-align: center; text-decoration: none;
+    }
+    .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #02101d; }
+    .btn-primary:active { filter: brightness(0.92); }
+    .btn-danger { background: rgba(248,113,113,0.15); color: var(--danger); border: 1px solid rgba(248,113,113,0.3); }
+    .btn-ghost { background: rgba(125,211,252,0.08); color: var(--accent); border: 1px solid var(--border); }
+    .btn-sm { padding: 8px 14px; font-size: 0.82rem; border-radius: 8px; width: auto; display: inline-block; }
+    /* inventory row */
+    .inv-row {
+      padding: 12px 0; border-bottom: 1px solid rgba(125,211,252,0.1);
+    }
+    .inv-row:last-child { border-bottom: none; }
+    .inv-row-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 4px; }
+    .inv-label { font-weight: 600; font-size: 0.92rem; }
+    .inv-meta { font-size: 0.78rem; color: var(--muted); }
+    .inv-amount { font-weight: 700; font-size: 1.05rem; color: var(--accent); white-space: nowrap; margin-left: 8px; }
+    .inv-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    /* exp row */
+    .exp-row {
+      padding: 12px 0; border-bottom: 1px solid rgba(125,211,252,0.1);
+    }
+    .exp-row:last-child { border-bottom: none; }
+    .exp-row-top { display: flex; justify-content: space-between; align-items: flex-start; }
+    .exp-label { font-weight: 600; font-size: 0.92rem; }
+    .exp-amount { font-weight: 700; color: var(--accent); white-space: nowrap; margin-left: 8px; }
+    .exp-meta { font-size: 0.78rem; color: var(--muted); margin-top: 3px; }
+    .exp-actions { margin-top: 8px; display: flex; gap: 6px; }
+    /* reconcile badge */
+    .badge-ok { padding: 3px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; background: rgba(74,222,128,0.15); color: var(--success); border: 1px solid rgba(74,222,128,0.3); }
+    .badge-pending { padding: 3px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; background: rgba(125,211,252,0.1); color: var(--muted); border: 1px solid var(--border); }
+    /* section label */
+    .section-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin: 20px 0 10px; }
+    /* empty state */
+    .empty { text-align: center; padding: 32px 16px; color: var(--muted); font-size: 0.88rem; }
+    /* edit form inline */
+    .edit-form { background: rgba(5,12,26,0.8); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+<div class="w-header">
+  <div>
+    <a class="title" href="{{ url_for('worker_home') }}">&#9632; Tech Deck</a>
+    <div class="subtitle">{{ header_sub }}</div>
+  </div>
+  <a class="logout-btn" href="{{ url_for('logout') }}">Sign out</a>
+</div>
+
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    {% for m in messages %}<div class="toast">{{ m }}</div>{% endfor %}
+  {% endif %}
+{% endwith %}
+
+<div class="w-body">{{ body | safe }}</div>
+
+{% if tab_bar %}
+<div class="tab-bar">
+  <a class="tab-btn {% if active_tab == 'inventory' %}active{% endif %}"
+     href="{{ url_for('worker_project', project_id=project_id) }}?tab=inventory">
+    <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    Inventory
+  </a>
+  <a class="tab-btn {% if active_tab == 'charges' %}active{% endif %}"
+     href="{{ url_for('worker_project', project_id=project_id) }}?tab=charges">
+    <svg viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+    Charges
+  </a>
+</div>
+{% endif %}
+</body>
+</html>
+"""
+
+
+def render_worker(body, header_sub="Field app", tab_bar=False, active_tab="inventory", project_id=None):
+    return render_template_string(
+        WORKER_SHELL,
+        body=body,
+        header_sub=header_sub,
+        tab_bar=tab_bar,
+        active_tab=active_tab,
+        project_id=project_id,
+    )
+
+
+@app.route("/worker")
+@login_required
+def worker_home():
+    projects = Project.query.order_by(Project.created_at.desc()).all()
+    rows = ""
+    for p in projects:
+        rows += f"""
+        <a class="proj-item" href="{url_for('worker_project', project_id=p.id)}">
+          <div>
+            <div class="proj-name">{p.name}</div>
+            <div class="proj-meta">{p.stage} &nbsp;·&nbsp; Budget ${p.budget:,.2f}</div>
+          </div>
+          <span class="chevron">›</span>
+        </a>"""
+    if not rows:
+        rows = '<div class="empty">No projects yet.</div>'
+
+    body = f'<div class="section-label">Projects</div><div class="card">{rows}</div>'
+    return render_worker(body, header_sub="Choose a project")
+
+
+@app.route("/worker/<int:project_id>")
+@login_required
+def worker_project(project_id):
+    project = Project.query.get_or_404(project_id)
+    tab = request.args.get("tab", "inventory")
+    edit_inv = request.args.get("edit_inv", type=int)
+    edit_exp = request.args.get("edit_exp", type=int)
+
+    if tab == "inventory":
+        body = _worker_inventory_tab(project, edit_inv)
+    else:
+        body = _worker_charges_tab(project, edit_exp)
+
+    return render_worker(
+        body,
+        header_sub=project.name,
+        tab_bar=True,
+        active_tab=tab,
+        project_id=project_id,
+    )
+
+
+def _worker_inventory_tab(project, edit_inv_id=None):
+    inventory = InventoryItem.query.filter_by(project_id=project.id).order_by(InventoryItem.last_updated.desc()).all()
+
+    rows = ""
+    for item in inventory:
+        edit_block = ""
+        if edit_inv_id == item.id:
+            edit_block = f"""
+            <form class="edit-form" action="{url_for('worker_update_inventory', project_id=project.id, item_id=item.id)}" method="post">
+              <div class="field-row">
+                <div>
+                  <label>Category</label>
+                  <select name="category">
+                    {''.join(f'<option {"selected" if item.category == c else ""}>{c}</option>' for c in ['Metal Tubing','Decks','Adapters','Others'])}
+                  </select>
+                </div>
+                <div>
+                  <label>Unit</label>
+                  <input type="text" name="unit" value="{item.unit}">
+                </div>
+              </div>
+              <div class="field">
+                <label>Description</label>
+                <input type="text" name="description" value="{item.description or ''}" required>
+              </div>
+              <div class="field-row">
+                <div>
+                  <label>Amount</label>
+                  <input type="number" step="0.01" name="total_used" value="{item.total_used}" required>
+                </div>
+                <div>
+                  <label>Location</label>
+                  <input type="text" name="location" value="{item.location or ''}">
+                </div>
+              </div>
+              <button class="btn btn-primary" type="submit">Save</button>
+            </form>"""
+
+        rows += f"""
+        <div class="inv-row">
+          <div class="inv-row-top">
+            <div>
+              <div class="inv-label">{item.description or item.category}</div>
+              <div class="inv-meta">{item.category} &nbsp;·&nbsp; {item.location or '—'}</div>
+            </div>
+            <div class="inv-amount">{item.total_used:.2f} {item.unit}</div>
+          </div>
+          <div class="inv-actions">
+            <a class="btn btn-ghost btn-sm" href="{url_for('worker_project', project_id=project.id)}?tab=inventory&edit_inv={item.id}">Edit</a>
+            <form style="display:inline" action="{url_for('worker_delete_inventory', project_id=project.id, item_id=item.id)}" method="post"
+                  onsubmit="return confirm('Remove this item?')">
+              <button class="btn btn-danger btn-sm" type="submit">Remove</button>
+            </form>
+          </div>
+          {edit_block}
+        </div>"""
+
+    if not rows:
+        rows = '<div class="empty">No inventory items yet.</div>'
+
+    return f"""
+    <div class="section-label">Current inventory</div>
+    <div class="card"><div class="card-body" style="padding-top:6px;padding-bottom:6px;">{rows}</div></div>
+
+    <div class="section-label">Add item</div>
+    <div class="card">
+      <div class="card-body">
+        <form action="{url_for('worker_add_inventory', project_id=project.id)}" method="post">
+          <div class="field-row">
+            <div>
+              <label>Category</label>
+              <select name="category">
+                <option>Metal Tubing</option><option>Decks</option><option>Adapters</option><option>Others</option>
+              </select>
+            </div>
+            <div>
+              <label>Unit</label>
+              <input type="text" name="unit" value="m" required>
+            </div>
+          </div>
+          <div class="field">
+            <label>Description</label>
+            <input type="text" name="description" placeholder="e.g. Deck boards 2x6" required>
+          </div>
+          <div class="field-row">
+            <div>
+              <label>Amount</label>
+              <input type="number" step="0.01" name="total_used" placeholder="0.00" required>
+            </div>
+            <div>
+              <label>Location</label>
+              <input type="text" name="location" placeholder="Site A">
+            </div>
+          </div>
+          <button class="btn btn-primary" type="submit">Add item</button>
+        </form>
+      </div>
+    </div>"""
+
+
+def _worker_charges_tab(project, edit_exp_id=None):
+    expenditures = (
+        Expenditure.query.filter_by(project_id=project.id)
+        .join(User)
+        .order_by(Expenditure.date.desc(), Expenditure.created_at.desc())
+        .all()
+    )
+    workers = User.query.order_by(User.email.asc()).all()
+    today = datetime.utcnow().date().isoformat()
+
+    rows = ""
+    for exp in expenditures:
+        badge = f'<span class="badge-ok">Reconciled</span>' if exp.is_reconciled else f'<span class="badge-pending">Pending</span>'
+        edit_block = ""
+        if edit_exp_id == exp.id:
+            worker_opts = "".join(
+                f'<option value="{w.id}" {"selected" if w.id == exp.worker_id else ""}>{w.email}</option>'
+                for w in workers
+            )
+            cat_opts = "".join(
+                f'<option {"selected" if exp.category == c else ""}>{c}</option>'
+                for c in ["Metal Tubing", "Decks", "Adapters", "Others"]
+            )
+            edit_block = f"""
+            <form class="edit-form" action="{url_for('worker_edit_expenditure', project_id=project.id, exp_id=exp.id)}" method="post">
+              <div class="field-row">
+                <div>
+                  <label>Date</label>
+                  <input type="date" name="date" value="{exp.date.isoformat()}" required>
+                </div>
+                <div>
+                  <label>Amount</label>
+                  <input type="number" step="0.01" name="amount" value="{exp.amount}" required>
+                </div>
+              </div>
+              <div class="field-row">
+                <div>
+                  <label>Category</label>
+                  <select name="category">{cat_opts}</select>
+                </div>
+                <div>
+                  <label>Worker</label>
+                  <select name="worker_id">{worker_opts}</select>
+                </div>
+              </div>
+              <div class="field">
+                <label>Description</label>
+                <input type="text" name="description" value="{exp.description or ''}">
+              </div>
+              <button class="btn btn-primary" type="submit">Save</button>
+            </form>"""
+
+        rows += f"""
+        <div class="exp-row">
+          <div class="exp-row-top">
+            <div>
+              <div class="exp-label">{exp.description or exp.category}</div>
+              <div class="exp-meta">{exp.date.strftime('%b %d, %Y')} &nbsp;·&nbsp; {exp.category} &nbsp;·&nbsp; {exp.worker.email}</div>
+            </div>
+            <div>
+              <div class="exp-amount">${exp.amount:,.2f}</div>
+              <div style="text-align:right;margin-top:4px;">{badge}</div>
+            </div>
+          </div>
+          <div class="exp-actions">
+            <a class="btn btn-ghost btn-sm" href="{url_for('worker_project', project_id=project.id)}?tab=charges&edit_exp={exp.id}">Edit</a>
+            <form style="display:inline" action="{url_for('toggle_expenditure', project_id=project.id, exp_id=exp.id)}" method="post">
+              <button class="btn btn-ghost btn-sm" type="submit">
+                {"Mark pending" if exp.is_reconciled else "Reconcile"}
+              </button>
+            </form>
+          </div>
+          {edit_block}
+        </div>"""
+
+    if not rows:
+        rows = '<div class="empty">No charges yet.</div>'
+
+    worker_opts = "".join(f'<option value="{w.id}">{w.email}</option>' for w in workers)
+
+    return f"""
+    <div class="section-label">Charges</div>
+    <div class="card"><div class="card-body" style="padding-top:6px;padding-bottom:6px;">{rows}</div></div>
+
+    <div class="section-label">Add charge</div>
+    <div class="card">
+      <div class="card-body">
+        <form action="{url_for('add_expenditure', project_id=project.id)}" method="post" enctype="multipart/form-data">
+          <div class="field-row">
+            <div>
+              <label>Date</label>
+              <input type="date" name="date" value="{today}" required>
+            </div>
+            <div>
+              <label>Amount ($)</label>
+              <input type="number" step="0.01" name="amount" placeholder="0.00" required>
+            </div>
+          </div>
+          <div class="field-row">
+            <div>
+              <label>Category</label>
+              <select name="category">
+                <option>Metal Tubing</option><option>Decks</option><option>Adapters</option><option>Others</option>
+              </select>
+            </div>
+            <div>
+              <label>Worker</label>
+              <select name="worker_id">{worker_opts}</select>
+            </div>
+          </div>
+          <div class="field">
+            <label>Description</label>
+            <input type="text" name="description" placeholder="What was purchased?">
+          </div>
+          <div class="field">
+            <label>Receipt photo (optional)</label>
+            <input type="file" name="receipt" accept="image/*" capture="environment">
+          </div>
+          <button class="btn btn-primary" type="submit">Save charge</button>
+        </form>
+      </div>
+    </div>"""
+
+
+@app.route("/worker/<int:project_id>/inventory/add", methods=["POST"])
+@login_required
+def worker_add_inventory(project_id):
+    project = Project.query.get_or_404(project_id)
+    item = InventoryItem(
+        project_id=project.id,
+        category=request.form.get("category", "Others"),
+        description=request.form.get("description", "").strip(),
+        unit=request.form.get("unit", "m"),
+        total_used=float(request.form.get("total_used", 0) or 0),
+        location=request.form.get("location", "").strip(),
+    )
+    db.session.add(item)
+    db.session.commit()
+    flash("Item added.")
+    return redirect(url_for("worker_project", project_id=project_id) + "?tab=inventory")
+
+
+@app.route("/worker/<int:project_id>/inventory/<int:item_id>/update", methods=["POST"])
+@login_required
+def worker_update_inventory(project_id, item_id):
+    item = InventoryItem.query.get_or_404(item_id)
+    if item.project_id != project_id:
+        flash("Item not found.")
+        return redirect(url_for("worker_project", project_id=project_id) + "?tab=inventory")
+    item.category = request.form.get("category", item.category)
+    item.description = request.form.get("description", item.description).strip()
+    item.unit = request.form.get("unit", item.unit)
+    item.total_used = float(request.form.get("total_used", item.total_used) or item.total_used)
+    item.location = request.form.get("location", item.location or "").strip()
+    item.last_updated = datetime.utcnow()
+    db.session.commit()
+    flash("Item updated.")
+    return redirect(url_for("worker_project", project_id=project_id) + "?tab=inventory")
+
+
+@app.route("/worker/<int:project_id>/inventory/<int:item_id>/delete", methods=["POST"])
+@login_required
+def worker_delete_inventory(project_id, item_id):
+    item = InventoryItem.query.get_or_404(item_id)
+    if item.project_id != project_id:
+        flash("Item not found.")
+        return redirect(url_for("worker_project", project_id=project_id) + "?tab=inventory")
+    db.session.delete(item)
+    db.session.commit()
+    flash("Item removed.")
+    return redirect(url_for("worker_project", project_id=project_id) + "?tab=inventory")
+
+
+@app.route("/worker/<int:project_id>/expenditure/<int:exp_id>/edit", methods=["POST"])
+@login_required
+def worker_edit_expenditure(project_id, exp_id):
+    exp = Expenditure.query.get_or_404(exp_id)
+    if exp.project_id != project_id:
+        flash("Charge not found.")
+        return redirect(url_for("worker_project", project_id=project_id) + "?tab=charges")
+    date_str = request.form.get("date") or datetime.utcnow().date().isoformat()
+    try:
+        exp.date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        exp.date = datetime.utcnow().date()
+    exp.amount = float(request.form.get("amount", exp.amount) or exp.amount)
+    exp.category = request.form.get("category", exp.category)
+    exp.worker_id = int(request.form.get("worker_id", exp.worker_id))
+    exp.description = request.form.get("description", exp.description or "").strip()
+    db.session.commit()
+    flash("Charge updated.")
+    return redirect(url_for("worker_project", project_id=project_id) + "?tab=charges")
+
+
 if __name__ == "__main__":
     app.run(debug=True)
