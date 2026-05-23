@@ -1,0 +1,1336 @@
+import os
+import re
+import uuid
+from datetime import datetime, timedelta
+from functools import wraps
+import smtplib
+from email.message import EmailMessage
+
+from flask import (
+    Flask,
+    flash,
+    redirect,
+    render_template_string,
+    request,
+    send_from_directory,
+    session,
+    url_for,
+)
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import inspect, text
+from werkzeug.security import check_password_hash, generate_password_hash
+
+try:
+    import pytesseract
+    from PIL import Image
+
+    OCR_AVAILABLE = True
+except Exception:
+    OCR_AVAILABLE = False
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+DB_PATH = os.path.join(BASE_DIR, "data.db")
+
+app = Flask(__name__)
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "replace-with-a-secure-random-secret")
+app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DB_PATH}"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAIL_SERVER"] = os.environ.get("MAIL_SERVER", "smtp.gmail.com")
+app.config["MAIL_PORT"] = int(os.environ.get("MAIL_PORT", "587"))
+app.config["MAIL_USE_TLS"] = os.environ.get("MAIL_USE_TLS", "true").lower() == "true"
+app.config["MAIL_USERNAME"] = os.environ.get("MAIL_USERNAME", "")
+app.config["MAIL_PASSWORD"] = os.environ.get("MAIL_PASSWORD", "")
+app.config["MAIL_DEFAULT_SENDER"] = os.environ.get("MAIL_DEFAULT_SENDER", "")
+
+db = SQLAlchemy(app)
+
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128), nullable=False)
+    role = db.Column(db.String(20), default="Manager")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class Project(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    stage = db.Column(db.String(20), default="Proposal")
+    budget = db.Column(db.Float, default=0.0)
+    revenue = db.Column(db.Float, default=0.0)
+    accounts_receivable = db.Column(db.Float, default=0.0)
+    payment_plan = db.Column(db.String(200), default="Standard Plan")
+    client_name = db.Column(db.String(120))
+    client_email = db.Column(db.String(120))
+    client_phone = db.Column(db.String(40))
+    client_company = db.Column(db.String(120))
+    client_address = db.Column(db.String(200))
+    payment_structure = db.Column(db.String(200))
+    payment_dates = db.Column(db.String(200))
+    payment_amounts = db.Column(db.String(200))
+    discount_amount = db.Column(db.Float, default=0.0)
+    discount_reason = db.Column(db.String(200))
+    payment_methods = db.Column(db.String(200))
+    receiving_accounts = db.Column(db.String(200))
+    installment_schedule = db.Column(db.String(200))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class InventoryItem(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)
+    category = db.Column(db.String(40), nullable=False)
+    description = db.Column(db.String(200))
+    unit = db.Column(db.String(20), default="m")
+    total_used = db.Column(db.Float, default=0.0)
+    location = db.Column(db.String(100))
+    last_updated = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class Expenditure(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)
+    worker_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    category = db.Column(db.String(40), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    description = db.Column(db.String(200))
+    receipt_image_url = db.Column(db.String(200))
+    is_reconciled = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    worker = db.relationship("User", foreign_keys=[worker_id])
+
+
+class ResetToken(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    token = db.Column(db.String(100), unique=True, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used = db.Column(db.Boolean, default=False)
+
+
+def seed_demo_data():
+    if User.query.count() == 0:
+        db.session.add_all(
+            [
+                User(email="admin@example.com", password_hash=generate_password_hash("admin123"), role="Admin"),
+                User(email="finance@example.com", password_hash=generate_password_hash("finance123"), role="Finance"),
+                User(email="worker@example.com", password_hash=generate_password_hash("worker123"), role="Field"),
+            ]
+        )
+        db.session.commit()
+
+    if Project.query.count() == 0:
+        project = Project(
+            name="Riverview Decking",
+            stage="Installation",
+            budget=24000.0,
+            revenue=28000.0,
+            accounts_receivable=8000.0,
+            payment_plan="Milestone Based",
+            client_name="Ava Thompson",
+            client_email="ava@example.com",
+            client_phone="(555) 010-1212",
+            client_company="Thompson Construction",
+            client_address="14 Cedar Lane, Suite 7",
+            payment_structure="30% at kickoff, 40% on install, 30% at final billing",
+            payment_dates="2026-06-05, 2026-07-10, 2026-08-15",
+            payment_amounts="$7,200, $9,600, $7,200",
+            discount_amount=200.0,
+            discount_reason="Early deposit incentive",
+            payment_methods="ACH, Credit Card",
+            receiving_accounts="Main Operating Account, Project Escrow",
+            installment_schedule="Kickoff, Installation, Final Billing",
+        )
+        db.session.add(project)
+        db.session.commit()
+
+        db.session.add_all(
+            [
+                InventoryItem(
+                    project_id=project.id,
+                    category="Decks",
+                    description="Deck boards 2x6",
+                    unit="m",
+                    total_used=120.0,
+                    location="Site A",
+                ),
+                InventoryItem(
+                    project_id=project.id,
+                    category="Metal Tubing",
+                    description="Tubing 1 inch",
+                    unit="m",
+                    total_used=60.0,
+                    location="Warehouse",
+                ),
+            ]
+        )
+        db.session.commit()
+
+        worker = User.query.filter_by(role="Field").first()
+        db.session.add(
+            Expenditure(
+                project_id=project.id,
+                worker_id=worker.id,
+                date=datetime.utcnow().date(),
+                category="Decks",
+                amount=350.0,
+                description="Deck boards for railing",
+            )
+        )
+        db.session.commit()
+
+
+def ensure_project_schema():
+    inspector = inspect(db.engine)
+    columns = {column["name"] for column in inspector.get_columns("project")}
+    migrations = [
+        ("client_name", "VARCHAR(120)"),
+        ("client_email", "VARCHAR(120)"),
+        ("client_phone", "VARCHAR(40)"),
+        ("client_company", "VARCHAR(120)"),
+        ("client_address", "VARCHAR(200)"),
+        ("payment_structure", "VARCHAR(200)"),
+        ("payment_dates", "VARCHAR(200)"),
+        ("payment_amounts", "VARCHAR(200)"),
+        ("discount_amount", "FLOAT"),
+        ("discount_reason", "VARCHAR(200)"),
+        ("payment_methods", "VARCHAR(200)"),
+        ("receiving_accounts", "VARCHAR(200)"),
+        ("installment_schedule", "VARCHAR(200)"),
+    ]
+
+    for column_name, column_type in migrations:
+        if column_name not in columns:
+            db.session.execute(text(f"ALTER TABLE project ADD COLUMN {column_name} {column_type}"))
+
+    db.session.commit()
+
+
+def login_required(view_func):
+    @wraps(view_func)
+    def wrapper(*args, **kwargs):
+        if "user_id" not in session:
+            flash("Please sign in to continue.")
+            return redirect(url_for("login"))
+        return view_func(*args, **kwargs)
+
+    return wrapper
+
+
+def get_current_user():
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+    return User.query.get(user_id)
+
+
+def save_uploaded_image(file_storage):
+    if not file_storage:
+        return None
+
+    filename = f"{uuid.uuid4().hex}_{file_storage.filename}"
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    file_storage.save(filepath)
+    return filename
+
+
+def extract_ocr(text):
+    vendor = None
+    invoice_date = None
+    amount = None
+
+    match = re.search(r"Vendor[:\s]+([^\n]+)", text, re.IGNORECASE)
+    if match:
+        vendor = match.group(1).strip()
+
+    match = re.search(r"Date[:\s]+([0-9]{2,4}[/.-][0-9]{1,2}[/.-][0-9]{2,4})", text, re.IGNORECASE)
+    if match:
+        invoice_date = match.group(1).strip()
+
+    match = re.search(r"Amount[:\s]+\$?([0-9]+(?:\.[0-9]{2})?)", text, re.IGNORECASE)
+    if match:
+        amount = float(match.group(1))
+
+    return {"vendor": vendor, "invoice_date": invoice_date, "amount": amount}
+
+
+def perform_ocr_on_image(filepath):
+    if not OCR_AVAILABLE:
+        return {}
+
+    try:
+        text = pytesseract.image_to_string(Image.open(filepath))
+        return extract_ocr(text)
+    except Exception:
+        return {}
+
+
+def create_reset_token(user):
+    token = uuid.uuid4().hex
+    reset_token = ResetToken(
+        user_id=user.id,
+        token=token,
+        expires_at=datetime.utcnow() + timedelta(days=1),
+    )
+    db.session.add(reset_token)
+    db.session.commit()
+    return token
+
+
+def send_reset_email(user, reset_link):
+    sender = app.config["MAIL_DEFAULT_SENDER"] or app.config["MAIL_USERNAME"]
+    if not sender or not app.config["MAIL_USERNAME"] or not app.config["MAIL_PASSWORD"]:
+        return False
+
+    message = EmailMessage()
+    message["Subject"] = "Reset your ProjDash password"
+    message["From"] = sender
+    message["To"] = user.email
+    message.set_content(
+        f"Click the link below to reset your password:\n\n{reset_link}\n\n"
+        "If you did not request this, you can ignore this email."
+    )
+
+    with smtplib.SMTP(app.config["MAIL_SERVER"], app.config["MAIL_PORT"]) as smtp:
+        if app.config["MAIL_USE_TLS"]:
+            smtp.starttls()
+        smtp.login(app.config["MAIL_USERNAME"], app.config["MAIL_PASSWORD"])
+        smtp.send_message(message)
+
+    return True
+
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+with app.app_context():
+    db.create_all()
+    ensure_project_schema()
+    seed_demo_data()
+
+
+BASE_TEMPLATE = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ProjDash • AI Operating Core</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+      :root {
+        --bg: #040b18;
+        --bg-soft: #0b1630;
+        --panel: rgba(10, 18, 36, 0.92);
+        --panel-strong: rgba(9, 16, 32, 0.98);
+        --border: rgba(124, 158, 255, 0.22);
+        --text: #eef4ff;
+        --muted: #b4c5e0;
+        --accent: #8cf1ff;
+        --accent-2: #a78bfa;
+        --shadow: 0 28px 80px rgba(2, 8, 22, 0.48);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding-top: 84px;
+        color: var(--text);
+        font-family: Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(140, 241, 255, 0.10), transparent 18%),
+          radial-gradient(circle at top right, rgba(167, 139, 250, 0.12), transparent 20%),
+          linear-gradient(180deg, #030813 0%, #090f1d 45%, #0a1224 100%);
+      }
+
+      .page-shell { max-width: 1280px; }
+
+      .navbar {
+        background: rgba(4, 11, 24, 0.88) !important;
+        border-bottom: 1px solid var(--border);
+        backdrop-filter: blur(14px);
+      }
+
+      .navbar-brand {
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .nav-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        border-radius: 999px;
+        padding: 0.2rem 0.75rem;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        color: #02101d;
+        font-size: 0.78rem;
+        font-weight: 800;
+      }
+
+      .hero-panel {
+        background: linear-gradient(135deg, rgba(8, 16, 32, 0.98), rgba(15, 27, 54, 0.88));
+        border: 1px solid var(--border);
+        border-radius: 28px;
+        box-shadow: var(--shadow);
+      }
+
+      .hero-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--accent);
+        font-size: 0.78rem;
+        font-weight: 800;
+      }
+
+      .hero-subtitle { color: var(--muted); font-size: 1.05rem; max-width: 42rem; }
+
+      .capsule-row { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+
+      .capsule {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.45rem 0.9rem;
+        border-radius: 999px;
+        border: 1px solid rgba(140, 241, 255, 0.2);
+        background: rgba(7, 14, 28, 0.7);
+        color: var(--text);
+        font-size: 0.9rem;
+      }
+
+      .glassy-card {
+        border-radius: 24px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(10, 18, 36, 0.95), rgba(9, 15, 30, 0.88));
+        box-shadow: var(--shadow);
+      }
+
+      .card {
+        border-radius: 24px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(10, 18, 36, 0.95), rgba(9, 15, 30, 0.88));
+        color: var(--text);
+      }
+
+      .card-body {
+        color: var(--text);
+      }
+
+      .glassy-card .card-body,
+      .card .card-body {
+        padding: 1.35rem;
+      }
+
+      .card-hover:hover {
+        transform: translateY(-1px);
+        transition: transform 160ms ease;
+      }
+
+      .section-title {
+        font-size: 0.86rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-bottom: 0.3rem;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.75rem;
+      }
+
+      .metric-card {
+        border-radius: 18px;
+        padding: 1rem;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(12, 20, 38, 0.96), rgba(8, 14, 28, 0.86));
+      }
+
+      .metric-card small, .metric-card .text-muted { color: var(--muted) !important; }
+
+      .metric-value {
+        display: block;
+        font-size: 1.65rem;
+        font-weight: 800;
+        margin-top: 0.35rem;
+      }
+
+      .table-responsive { border-radius: 18px; overflow: hidden; }
+
+      .table {
+        --bs-table-color: var(--text);
+        --bs-table-bg: transparent;
+        --bs-table-striped-bg: rgba(140, 158, 190, 0.06);
+        --bs-table-border-color: rgba(124, 158, 255, 0.12);
+        margin-bottom: 0;
+      }
+
+      .table th { color: var(--muted); font-weight: 700; }
+
+      .form-label { color: var(--text); font-weight: 700; }
+
+      .form-control,
+      .form-select {
+        background: rgba(5, 11, 24, 0.85);
+        border: 1px solid rgba(124, 158, 255, 0.16);
+        color: var(--text);
+      }
+
+      .form-control::placeholder,
+      .form-select option { color: #93abc8; }
+
+      .form-control:focus,
+      .form-select:focus {
+        background: rgba(7, 14, 28, 0.94);
+        border-color: rgba(140, 241, 255, 0.46);
+        box-shadow: 0 0 0 0.22rem rgba(140, 241, 255, 0.18);
+        color: var(--text);
+      }
+
+      .btn-primary {
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        border: 0;
+        color: #04111f;
+        font-weight: 800;
+      }
+
+      .btn-primary:hover { filter: brightness(1.05); }
+
+      .btn-outline-primary {
+        border-color: rgba(140, 241, 255, 0.45);
+        color: var(--text);
+      }
+
+      .btn-outline-primary:hover {
+        background: rgba(140, 241, 255, 0.1);
+        color: var(--text);
+      }
+
+      .alert-info {
+        border: 1px solid rgba(140, 241, 255, 0.25);
+        background: rgba(10, 20, 40, 0.85);
+        color: var(--text);
+      }
+
+      .text-muted { color: var(--muted) !important; }
+
+      .shadow-sm { box-shadow: var(--shadow) !important; }
+
+      .upload-thumb { max-height: 120px; object-fit: cover; }
+
+      @media (max-width: 768px) {
+        .metric-grid { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-dark fixed-top">
+      <div class="container-fluid page-shell">
+        <a class="navbar-brand" href="{{ url_for('index') }}">ProjDash</a>
+        <div class="d-flex align-items-center gap-3 ms-auto">
+          <span class="nav-pill">AI Operating Core</span>
+          {% if current_user %}
+          <span class="navbar-text text-light d-none d-lg-block">{{ current_user.email }} • {{ current_user.role }}</span>
+          <a class="btn btn-outline-light btn-sm" href="{{ url_for('logout') }}">Log out</a>
+          {% endif %}
+        </div>
+      </div>
+    </nav>
+
+    <main class="container page-shell">
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="alert alert-info mt-3" role="alert">
+            {% for message in messages %}
+              {{ message }}{% if not loop.last %}<br>{% endif %}
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+      {{ content | safe }}
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>
+"""
+
+
+PROJECTS_TEMPLATE = """
+{% set current_user = current_user or None %}
+{{ content | safe }}
+"""
+
+
+def render_page(body, current_user=None, **context):
+    rendered_body = render_template_string(body, current_user=current_user, **context)
+    return render_template_string(BASE_TEMPLATE, content=rendered_body, current_user=current_user)
+
+
+@app.route("/")
+@login_required
+def index():
+    current_user = get_current_user()
+    projects = Project.query.order_by(Project.created_at.desc()).all()
+    body = """
+    <div class="hero-panel p-4 p-md-5 mb-4">
+      <div class="row g-4 align-items-center">
+        <div class="col-lg-7">
+          <span class="hero-kicker">AI • Workflow • Operations</span>
+          <h1 class="display-5 fw-bold mt-3 mb-3">Operations command center for every active project.</h1>
+          <p class="hero-subtitle mb-4">Track delivery stage, revenue, receivables, inventory, and approvals in one workspace designed for high-velocity teams.</p>
+          <div class="capsule-row">
+            <span class="capsule">24/7 visibility</span>
+            <span class="capsule">Human review</span>
+            <span class="capsule">Payment and inventory intelligence</span>
+          </div>
+        </div>
+        <div class="col-lg-5">
+          <div class="metric-grid">
+            <div class="metric-card">
+              <div class="section-title">Projects</div>
+              <span class="metric-value">{{ projects|length }}</span>
+              <small>active workstreams</small>
+            </div>
+            <div class="metric-card">
+              <div class="section-title">Revenue</div>
+              <span class="metric-value">${{ "%.2f"|format(projects|sum(attribute='revenue')) }}</span>
+              <small>tracked across the portfolio</small>
+            </div>
+            <div class="metric-card">
+              <div class="section-title">Accounts receivable</div>
+              <span class="metric-value">${{ "%.2f"|format(projects|sum(attribute='accounts_receivable')) }}</span>
+              <small>open balance</small>
+            </div>
+            <div class="metric-card">
+              <div class="section-title">Proposal closing</div>
+              <span class="metric-value">{{ projects|selectattr('stage', 'equalto', 'Proposal Closing')|list|length }}</span>
+              <small>current negotiations</small>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="glassy-card mb-4">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
+          <div>
+            <div class="section-title">Create a new delivery flow</div>
+            <h2 class="h4 mb-0">Add a project</h2>
+          </div>
+          <span class="capsule">Smart intake • AI-aware operations</span>
+        </div>
+        <form action="{{ url_for('add_project') }}" method="post" class="row g-3 align-items-end">
+          <div class="col-md-4">
+            <label class="form-label">Project name</label>
+            <input type="text" name="name" class="form-control" required>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Stage</label>
+            <select name="stage" class="form-select">
+              <option value="Proposal">Proposal</option>
+              <option value="Proposal Closing">Proposal Closing</option>
+              <option value="Installation">Installation</option>
+              <option value="Final Billing">Final Billing</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Budget</label>
+            <input type="number" step="0.01" name="budget" class="form-control" required>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Payment plan</label>
+            <input type="text" name="payment_plan" class="form-control" value="Standard Plan">
+          </div>
+          <div class="col-md-2">
+            <button class="btn btn-primary w-100" type="submit">Create</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="row g-3">
+      {% for project in projects %}
+      <div class="col-md-6">
+        <div class="glassy-card h-100 card-hover">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start gap-3">
+              <div>
+                <div class="section-title">{{ project.stage }}</div>
+                <h5 class="card-title mb-2">{{ project.name }}</h5>
+              </div>
+              <span class="capsule">{{ project.payment_plan }}</span>
+            </div>
+            <p class="mb-1"><strong>Budget:</strong> ${{ "%.2f"|format(project.budget) }}</p>
+            <p class="mb-1"><strong>Revenue:</strong> ${{ "%.2f"|format(project.revenue) }}</p>
+            <p class="mb-3"><strong>Accounts receivable:</strong> ${{ "%.2f"|format(project.accounts_receivable) }}</p>
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+              <small class="text-muted">Updated {{ project.updated_at.strftime('%Y-%m-%d %H:%M') }}</small>
+              <a href="{{ url_for('project_dashboard', project_id=project.id) }}" class="btn btn-outline-primary btn-sm">Open project</a>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    """
+    return render_page(body, current_user, projects=projects)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        user = User.query.filter_by(email=email).first()
+
+        if user and check_password_hash(user.password_hash, password):
+            session["user_id"] = user.id
+            flash("Signed in successfully.")
+            return redirect(url_for("index"))
+
+        flash("Invalid email or password.")
+
+    body = """
+    <div class="row justify-content-center">
+      <div class="col-lg-5">
+        <div class="card shadow-sm">
+          <div class="card-body p-4">
+            <h1 class="h3 mb-3">Sign in</h1>
+            <p class="text-muted">Use the demo credentials or create a new account through your reset flow.</p>
+            <form method="post">
+              <div class="mb-3">
+                <label class="form-label">Email</label>
+                <input type="email" name="email" class="form-control" required>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Password</label>
+                <input type="password" name="password" class="form-control" required>
+              </div>
+              <div class="d-grid gap-2">
+                <button class="btn btn-primary" type="submit">Continue</button>
+                <a class="btn btn-outline-secondary" href="{{ url_for('forgot_password') }}">Forgot password?</a>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+    return render_page(body, get_current_user())
+
+
+@app.route("/logout")
+def logout():
+    session.pop("user_id", None)
+    flash("You have been logged out.")
+    return redirect(url_for("login"))
+
+
+@app.route("/projects/add", methods=["POST"])
+@login_required
+def add_project():
+    name = request.form.get("name", "").strip()
+    if not name:
+        flash("Project name is required.")
+        return redirect(url_for("index"))
+
+    project = Project(
+        name=name,
+        stage=request.form.get("stage", "Proposal"),
+        budget=float(request.form.get("budget", 0) or 0),
+        payment_plan=request.form.get("payment_plan", "Standard Plan"),
+    )
+    db.session.add(project)
+    db.session.commit()
+    flash(f"Project '{name}' added.")
+    return redirect(url_for("project_dashboard", project_id=project.id))
+
+
+@app.route("/project/<int:project_id>")
+@login_required
+def project_dashboard(project_id):
+    current_user = get_current_user()
+    project = Project.query.get_or_404(project_id)
+    today = datetime.utcnow().date().isoformat()
+    inventory = InventoryItem.query.filter_by(project_id=project.id).order_by(InventoryItem.last_updated.desc()).all()
+    expenditures = (
+        Expenditure.query.filter_by(project_id=project.id)
+        .join(User)
+        .order_by(Expenditure.date.desc(), Expenditure.created_at.desc())
+        .all()
+    )
+    workers = User.query.order_by(User.email.asc()).all()
+    cost_total = sum(expense.amount for expense in expenditures)
+
+    payment_summary = project.payment_plan
+    payment_details = []
+    if project.installment_schedule:
+        payment_details.append(f"Installments: {project.installment_schedule}")
+    if project.payment_dates:
+        payment_details.append(f"Dates: {project.payment_dates}")
+    if project.payment_amounts:
+        payment_details.append(f"Amounts: {project.payment_amounts}")
+    if project.discount_amount:
+        payment_details.append(f"Discount: ${project.discount_amount:.2f}")
+    if payment_details:
+        payment_summary = " | ".join(payment_details)
+
+    body = """
+    <div class="hero-panel p-4 p-md-5 mb-4">
+      <div class="row g-4 align-items-center">
+        <div class="col-lg-8">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+            <span class="hero-kicker">AI Operating Core</span>
+            <span class="capsule">{{ project.stage }}</span>
+            <span class="capsule">{{ project.payment_plan }}</span>
+          </div>
+          <h1 class="display-5 fw-bold mb-3">{{ project.name }}</h1>
+          <p class="hero-subtitle mb-4">A live project cockpit for budgets, receivables, payment timing, inventory, and approvals all in one control surface.</p>
+          <div class="capsule-row">
+            <span class="capsule">Budget ${{ "%.2f"|format(project.budget) }}</span>
+            <span class="capsule">Revenue ${{ "%.2f"|format(project.revenue) }}</span>
+            <span class="capsule">AR ${{ "%.2f"|format(project.accounts_receivable) }}</span>
+            <span class="capsule">Cost ${{ "%.2f"|format(cost_total) }}</span>
+          </div>
+        </div>
+        <div class="col-lg-4">
+          <div class="metric-grid">
+            <div class="metric-card">
+              <div class="section-title">Cost</div>
+              <span class="metric-value">${{ "%.2f"|format(cost_total) }}</span>
+            </div>
+            <div class="metric-card">
+              <div class="section-title">Revenue</div>
+              <span class="metric-value">${{ "%.2f"|format(project.revenue) }}</span>
+            </div>
+            <div class="metric-card">
+              <div class="section-title">AR</div>
+              <span class="metric-value">${{ "%.2f"|format(project.accounts_receivable) }}</span>
+            </div>
+            <div class="metric-card">
+              <div class="section-title">Timeline</div>
+              <span class="metric-value">{{ project.installment_schedule or '—' }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="glassy-card mb-4">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
+          <div>
+            <div class="section-title">Project operating mode</div>
+            <h2 class="h4 mb-0">Update project</h2>
+          </div>
+          <span class="capsule">{{ payment_summary }}</span>
+        </div>
+        <form action="{{ url_for('update_project', project_id=project.id) }}" method="post" class="row g-3 align-items-end">
+          <div class="col-md-4">
+            <label class="form-label">Stage</label>
+            <select name="stage" class="form-select">
+              <option value="Proposal" {% if project.stage == 'Proposal' %}selected{% endif %}>Proposal</option>
+              <option value="Proposal Closing" {% if project.stage == 'Proposal Closing' %}selected{% endif %}>Proposal Closing</option>
+              <option value="Installation" {% if project.stage == 'Installation' %}selected{% endif %}>Installation</option>
+              <option value="Final Billing" {% if project.stage == 'Final Billing' %}selected{% endif %}>Final Billing</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Budget</label>
+            <input type="number" step="0.01" name="budget" class="form-control" value="{{ project.budget }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Revenue</label>
+            <input type="number" step="0.01" name="revenue" class="form-control" value="{{ project.revenue }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Accounts receivable</label>
+            <input type="number" step="0.01" name="accounts_receivable" class="form-control" value="{{ project.accounts_receivable }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Payment plan</label>
+            <input type="text" name="payment_plan" class="form-control" value="{{ project.payment_plan }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Installment schedule</label>
+            <input type="text" name="installment_schedule" class="form-control" value="{{ project.installment_schedule or '' }}" placeholder="Kickoff, Install, Final Billing">
+          </div>
+
+          {% if project.stage == 'Proposal Closing' %}
+          <div class="col-md-6">
+            <label class="form-label">Client name</label>
+            <input type="text" name="client_name" class="form-control" value="{{ project.client_name or '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Client company</label>
+            <input type="text" name="client_company" class="form-control" value="{{ project.client_company or '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Client email</label>
+            <input type="email" name="client_email" class="form-control" value="{{ project.client_email or '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Client phone</label>
+            <input type="text" name="client_phone" class="form-control" value="{{ project.client_phone or '' }}">
+          </div>
+          <div class="col-md-12">
+            <label class="form-label">Client address</label>
+            <input type="text" name="client_address" class="form-control" value="{{ project.client_address or '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Payment structure</label>
+            <input type="text" name="payment_structure" class="form-control" value="{{ project.payment_structure or '' }}" placeholder="30% at kickoff, 40% on install">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Payment dates</label>
+            <input type="text" name="payment_dates" class="form-control" value="{{ project.payment_dates or '' }}" placeholder="2026-06-05, 2026-07-10">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Payment amounts</label>
+            <input type="text" name="payment_amounts" class="form-control" value="{{ project.payment_amounts or '' }}" placeholder="$7,200, $9,600">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Discount amount</label>
+            <input type="number" step="0.01" name="discount_amount" class="form-control" value="{{ project.discount_amount or 0 }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Discount reason</label>
+            <input type="text" name="discount_reason" class="form-control" value="{{ project.discount_reason or '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Payment methods</label>
+            <input type="text" name="payment_methods" class="form-control" value="{{ project.payment_methods or '' }}" placeholder="ACH, Check, Credit Card">
+          </div>
+          <div class="col-md-12">
+            <label class="form-label">Receiving accounts</label>
+            <input type="text" name="receiving_accounts" class="form-control" value="{{ project.receiving_accounts or '' }}" placeholder="Main Operating Account, Escrow">
+          </div>
+          {% endif %}
+
+          <div class="col-12 text-end">
+            <button class="btn btn-primary" type="submit">Save changes</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="row g-4">
+      <div class="col-lg-6">
+        <div class="glassy-card h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
+              <div>
+                <div class="section-title">Field intelligence</div>
+                <h5 class="card-title mb-0">Inventory</h5>
+              </div>
+              <span class="capsule">Adjust + add + remove</span>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle">
+                <thead>
+                  <tr><th>Category</th><th>Description</th><th>Unit</th><th>Current amount</th><th>Update</th><th>Location</th></tr>
+                </thead>
+                <tbody>
+                  {% for item in inventory %}
+                  <tr>
+                    <td>{{ item.category }}</td>
+                    <td>{{ item.description }}</td>
+                    <td>{{ item.unit }}</td>
+                    <td>{{ "%.2f"|format(item.total_used) }}</td>
+                    <td>
+                      <form action="{{ url_for('update_inventory_item', project_id=project.id, item_id=item.id) }}" method="post" class="d-flex flex-column gap-2">
+                        <div class="input-group input-group-sm">
+                          <input type="number" step="0.01" name="adjustment_amount" class="form-control" placeholder="Amount" required>
+                          <select name="action" class="form-select">
+                            <option value="set">Set</option>
+                            <option value="add">Add</option>
+                            <option value="remove">Remove</option>
+                          </select>
+                        </div>
+                        <button class="btn btn-sm btn-outline-primary" type="submit">Update</button>
+                      </form>
+                    </td>
+                    <td>{{ item.location or '—' }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+
+            <h6 class="mt-4">Add inventory</h6>
+            <form action="{{ url_for('add_inventory', project_id=project.id) }}" method="post" class="row g-2">
+              <div class="col-md-3">
+                <select name="category" class="form-select">
+                  <option>Metal Tubing</option>
+                  <option>Decks</option>
+                  <option>Adapters</option>
+                  <option>Others</option>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <input type="text" name="description" class="form-control" placeholder="Description" required>
+              </div>
+              <div class="col-md-2">
+                <input type="text" name="unit" class="form-control" placeholder="Unit" value="m">
+              </div>
+              <div class="col-md-3">
+                <input type="number" step="0.01" name="total_used" class="form-control" placeholder="Amount" required>
+              </div>
+              <div class="col-md-8">
+                <input type="text" name="location" class="form-control" placeholder="Location">
+              </div>
+              <div class="col-md-4 text-end">
+                <button class="btn btn-primary w-100" type="submit">Add item</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-6">
+        <div class="glassy-card h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
+              <div>
+                <div class="section-title">Financial evidence</div>
+                <h5 class="card-title mb-0">Expenditures</h5>
+              </div>
+              <span class="capsule">{{ expenditures|length }} entries</span>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle">
+                <thead>
+                  <tr><th>Date</th><th>Worker</th><th>Category</th><th>Amount</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                  {% for expense in expenditures %}
+                  <tr>
+                    <td>{{ expense.date.strftime('%Y-%m-%d') }}</td>
+                    <td>{{ expense.worker.email }}</td>
+                    <td>{{ expense.category }}</td>
+                    <td>${{ "%.2f"|format(expense.amount) }}</td>
+                    <td>
+                      <form action="{{ url_for('toggle_expenditure', project_id=project.id, exp_id=expense.id) }}" method="post" class="d-inline">
+                        <button class="btn btn-sm {% if expense.is_reconciled %}btn-success{% else %}btn-outline-primary{% endif %}" type="submit">
+                          {% if expense.is_reconciled %}Reconciled{% else %}Needs review{% endif %}
+                        </button>
+                      </form>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+
+            <h6 class="mt-4">Add expenditure</h6>
+            <form action="{{ url_for('add_expenditure', project_id=project.id) }}" method="post" enctype="multipart/form-data" class="row g-2">
+              <div class="col-md-4">
+                <label class="form-label">Worker</label>
+                <select name="worker_id" class="form-select">
+                  {% for worker in workers %}
+                  <option value="{{ worker.id }}">{{ worker.email }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Date</label>
+                <input type="date" name="date" class="form-control" value="{{ today }}">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Category</label>
+                <select name="category" class="form-select">
+                  <option>Metal Tubing</option>
+                  <option>Decks</option>
+                  <option>Adapters</option>
+                  <option>Others</option>
+                </select>
+              </div>
+              <div class="col-md-8">
+                <label class="form-label">Description</label>
+                <input type="text" name="description" class="form-control" placeholder="Receipt note">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Amount</label>
+                <input type="number" step="0.01" name="amount" class="form-control" placeholder="0.00">
+              </div>
+              <div class="col-12">
+                <label class="form-label">Receipt image (optional)</label>
+                <input type="file" name="receipt" class="form-control">
+              </div>
+              <div class="col-12 text-end">
+                <button class="btn btn-primary w-100" type="submit">Save expenditure</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+
+    return render_page(
+        body,
+        current_user,
+        project=project,
+        inventory=inventory,
+        expenditures=expenditures,
+        workers=workers,
+        today=today,
+        cost_total=cost_total,
+        payment_summary=payment_summary,
+    )
+
+
+@app.route("/project/<int:project_id>/update", methods=["POST"])
+@login_required
+def update_project(project_id):
+    project = Project.query.get_or_404(project_id)
+    project.stage = request.form.get("stage", project.stage)
+    project.budget = float(request.form.get("budget", project.budget) or project.budget)
+    project.revenue = float(request.form.get("revenue", project.revenue) or project.revenue)
+    project.accounts_receivable = float(request.form.get("accounts_receivable", project.accounts_receivable) or project.accounts_receivable)
+    project.payment_plan = request.form.get("payment_plan", project.payment_plan)
+    project.installment_schedule = request.form.get("installment_schedule", project.installment_schedule)
+    project.client_name = request.form.get("client_name", project.client_name)
+    project.client_email = request.form.get("client_email", project.client_email)
+    project.client_phone = request.form.get("client_phone", project.client_phone)
+    project.client_company = request.form.get("client_company", project.client_company)
+    project.client_address = request.form.get("client_address", project.client_address)
+    project.payment_structure = request.form.get("payment_structure", project.payment_structure)
+    project.payment_dates = request.form.get("payment_dates", project.payment_dates)
+    project.payment_amounts = request.form.get("payment_amounts", project.payment_amounts)
+    project.discount_amount = float(request.form.get("discount_amount", project.discount_amount) or project.discount_amount)
+    project.discount_reason = request.form.get("discount_reason", project.discount_reason)
+    project.payment_methods = request.form.get("payment_methods", project.payment_methods)
+    project.receiving_accounts = request.form.get("receiving_accounts", project.receiving_accounts)
+    db.session.commit()
+    flash("Project updated.")
+    return redirect(url_for("project_dashboard", project_id=project.id))
+
+
+@app.route("/project/<int:project_id>/inventory", methods=["POST"])
+@login_required
+def add_inventory(project_id):
+    project = Project.query.get_or_404(project_id)
+    item = InventoryItem(
+        project_id=project.id,
+        category=request.form.get("category", "Others"),
+        description=request.form.get("description", "").strip(),
+        unit=request.form.get("unit", "m"),
+        total_used=float(request.form.get("total_used", 0) or 0),
+        location=request.form.get("location", "").strip(),
+    )
+    db.session.add(item)
+    db.session.commit()
+    flash("Inventory item added.")
+    return redirect(url_for("project_dashboard", project_id=project.id))
+
+
+@app.route("/project/<int:project_id>/inventory/<int:item_id>", methods=["POST"])
+@login_required
+def update_inventory_item(project_id, item_id):
+    project = Project.query.get_or_404(project_id)
+    item = InventoryItem.query.get_or_404(item_id)
+
+    if item.project_id != project.id:
+        flash("Inventory item could not be found for this project.")
+        return redirect(url_for("project_dashboard", project_id=project.id))
+
+    action = request.form.get("action", "set")
+    adjustment = abs(float(request.form.get("adjustment_amount", 0) or 0))
+
+    if action == "add":
+        item.total_used += adjustment
+        message = "Inventory increased."
+    elif action == "remove":
+        item.total_used = max(0.0, item.total_used - adjustment)
+        message = "Inventory reduced."
+    else:
+        item.total_used = adjustment
+        message = "Inventory updated."
+
+    item.last_updated = datetime.utcnow()
+    db.session.commit()
+    flash(message)
+    return redirect(url_for("project_dashboard", project_id=project.id))
+
+
+@app.route("/project/<int:project_id>/expenditure", methods=["POST"])
+@login_required
+def add_expenditure(project_id):
+    project = Project.query.get_or_404(project_id)
+
+    receipt_filename = None
+    receipt_image_url = None
+    ocr_data = {}
+
+    if "receipt" in request.files:
+        receipt_file = request.files["receipt"]
+        if receipt_file and receipt_file.filename:
+            receipt_filename = save_uploaded_image(receipt_file)
+            receipt_image_url = url_for("uploaded_file", filename=receipt_filename)
+            ocr_path = os.path.join(app.config["UPLOAD_FOLDER"], receipt_filename)
+            ocr_data = perform_ocr_on_image(ocr_path)
+
+    description = request.form.get("description", "").strip()
+    amount = request.form.get("amount", "")
+    date_value = request.form.get("date") or datetime.utcnow().date().isoformat()
+
+    if not description and ocr_data.get("vendor"):
+        description = ocr_data.get("vendor")
+    if not amount and ocr_data.get("amount") is not None:
+        amount = ocr_data.get("amount")
+
+    try:
+        parsed_date = datetime.strptime(date_value, "%Y-%m-%d").date()
+    except ValueError:
+        parsed_date = datetime.utcnow().date()
+
+    expense = Expenditure(
+        project_id=project.id,
+        worker_id=int(request.form.get("worker_id", 0)),
+        date=parsed_date,
+        category=request.form.get("category", "Others"),
+        amount=float(amount or 0),
+        description=description or "Receipt upload",
+        receipt_image_url=receipt_image_url,
+    )
+    db.session.add(expense)
+    db.session.commit()
+
+    if ocr_data:
+        flash("Receipt OCR parsed. Review and confirm the amount and description.")
+    else:
+        flash("Expenditure saved.")
+
+    return redirect(url_for("project_dashboard", project_id=project.id))
+
+
+@app.route("/project/<int:project_id>/expenditure/<int:exp_id>/toggle", methods=["POST"])
+@login_required
+def toggle_expenditure(project_id, exp_id):
+    expense = Expenditure.query.get_or_404(exp_id)
+    expense.is_reconciled = not expense.is_reconciled
+    db.session.commit()
+    flash("Expenditure status updated.")
+    return redirect(url_for("project_dashboard", project_id=project_id))
+
+
+@app.route("/uploads/<filename>")
+def uploaded_file(filename):
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    current_user = get_current_user()
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        user = User.query.filter_by(email=email).first()
+
+        if user:
+            token = create_reset_token(user)
+            reset_url = url_for("reset_password", token=token, _external=True)
+            delivered = send_reset_email(user, reset_url)
+            if delivered:
+                flash("A password reset link has been sent to your email.")
+            else:
+                flash(f"Password reset link ready: {reset_url}")
+        else:
+            flash("If an account exists, a reset link will be sent.")
+
+    body = """
+    <div class="row justify-content-center">
+      <div class="col-lg-5">
+        <div class="card shadow-sm">
+          <div class="card-body p-4">
+            <h1 class="h3 mb-3">Reset your password</h1>
+            <p class="text-muted">Enter your email address and we will generate a secure reset link.</p>
+            <form method="post">
+              <div class="mb-3">
+                <label class="form-label">Email</label>
+                <input type="email" name="email" class="form-control" required>
+              </div>
+              <div class="d-grid">
+                <button class="btn btn-primary" type="submit">Send reset link</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+    return render_page(body, current_user)
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    current_user = get_current_user()
+    reset_entry = ResetToken.query.filter_by(token=token).first()
+
+    if not reset_entry or reset_entry.used or reset_entry.expires_at < datetime.utcnow():
+        flash("This reset link is invalid, expired, or has already been used.")
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+
+        if password != confirm:
+            flash("Passwords do not match.")
+            return render_page("<p>Passwords do not match.</p>", current_user)
+
+        user = User.query.get(reset_entry.user_id)
+        if not user:
+            flash("The user associated with this reset link no longer exists.")
+            return redirect(url_for("login"))
+
+        user.password_hash = generate_password_hash(password)
+        reset_entry.used = True
+        db.session.commit()
+        flash("Your password has been updated. You can sign in now.")
+        return redirect(url_for("login"))
+
+    body = """
+    <div class="row justify-content-center">
+      <div class="col-lg-5">
+        <div class="card shadow-sm">
+          <div class="card-body p-4">
+            <h1 class="h3 mb-3">Choose a new password</h1>
+            <form method="post">
+              <div class="mb-3">
+                <label class="form-label">New password</label>
+                <input type="password" name="password" class="form-control" required>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Confirm password</label>
+                <input type="password" name="confirm_password" class="form-control" required>
+              </div>
+              <div class="d-grid">
+                <button class="btn btn-primary" type="submit">Update password</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+    return render_page(body, current_user)
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
