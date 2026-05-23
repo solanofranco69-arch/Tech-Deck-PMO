@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Tech Deck PMO</title>
-    <meta name="description" content="Tech Deck PMO — commercial operations, intake, and project delivery dashboard." />
+    <meta name="description" content="Tech Deck PMO — project operations dashboard for field and commercial teams. Budget, inventory, receivables, and payment intelligence in one control surface." />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -16,6 +16,7 @@
         --muted: #94a3b8;
         --accent: #7dd3fc;
         --accent-2: #38bdf8;
+        --accent-3: #a78bfa;
         --shadow: 0 24px 80px rgba(14, 165, 233, 0.18);
         --border: rgba(125, 211, 252, 0.22);
       }
@@ -24,19 +25,24 @@
         margin: 0;
         font-family: Inter, system-ui, sans-serif;
         color: var(--text);
-        background: radial-gradient(circle at top, #13243d 0%, #060b14 55%, #02060d 100%);
+        background:
+          radial-gradient(circle at top left,  rgba(125, 211, 252, 0.07), transparent 20%),
+          radial-gradient(circle at top right, rgba(167, 139, 250, 0.09), transparent 22%),
+          radial-gradient(circle at top, #13243d 0%, #060b14 55%, #02060d 100%);
       }
       .shell {
         max-width: 1100px;
         margin: 0 auto;
         padding: 32px 20px 80px;
       }
+
+      /* ── nav ── */
       .nav {
         display: flex;
         justify-content: space-between;
         align-items: center;
         gap: 16px;
-        margin-bottom: 28px;
+        margin-bottom: 36px;
       }
       .brand {
         display: flex;
@@ -56,100 +62,203 @@
         display: inline-flex;
         align-items: center;
         gap: 8px;
-        padding: 8px 12px;
+        padding: 8px 14px;
         border-radius: 999px;
-        background: rgba(125, 211, 252, 0.12);
+        background: rgba(125, 211, 252, 0.1);
         border: 1px solid var(--border);
         color: var(--accent);
-        font-size: 0.92rem;
+        font-size: 0.88rem;
+        font-weight: 600;
       }
-      .hero {
-        display: grid;
-        grid-template-columns: 1.15fr 0.85fr;
-        gap: 28px;
-        align-items: center;
-      }
-      .hero-card,
-      .metric-grid,
-      .feature-list,
-      .cta-panel {
+
+      /* ── shared card shell ── */
+      .card {
         background: var(--panel);
         border: 1px solid var(--border);
         border-radius: 24px;
         box-shadow: var(--shadow);
       }
-      .hero-card {
-        padding: 36px;
+
+      /* ── hero ── */
+      .hero {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 24px;
+        align-items: start;
       }
-      .eyebrow { color: var(--accent); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.8rem; margin-bottom: 14px; }
-      h1 { font-size: clamp(2.2rem, 2.7vw, 3rem); line-height: 1.02; margin: 0 0 14px; }
-      p { color: var(--muted); line-height: 1.7; font-size: 1.02rem; }
+      .hero-card { padding: 40px 36px; }
+      .eyebrow {
+        color: var(--accent);
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        font-size: 0.78rem;
+        margin-bottom: 14px;
+      }
+      h1 {
+        font-size: clamp(2rem, 2.7vw, 2.85rem);
+        line-height: 1.05;
+        margin: 0 0 14px;
+      }
+      p { color: var(--muted); line-height: 1.75; font-size: 1rem; margin: 0 0 16px; }
       .hero-actions { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 12px; }
       .primary-btn, .secondary-btn {
         border-radius: 999px;
-        padding: 13px 18px;
+        padding: 13px 20px;
         font-weight: 700;
+        font-size: 0.95rem;
         text-decoration: none;
         border: 1px solid transparent;
+        transition: filter 140ms, transform 140ms;
       }
       .primary-btn {
         background: linear-gradient(135deg, var(--accent), var(--accent-2));
         color: #03121f;
       }
+      .primary-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
       .secondary-btn {
         color: var(--text);
         border-color: var(--border);
         background: rgba(15, 23, 42, 0.7);
       }
-      .hero-aside {
-        display: flex;
-        flex-direction: column;
-        gap: 18px;
-      }
-      .cta-panel {
-        padding: 24px;
-      }
-      .cta-panel h2 { margin-top: 0; margin-bottom: 12px; font-size: 1.2rem; }
+      .secondary-btn:hover { background: rgba(125, 211, 252, 0.08); transform: translateY(-1px); }
+
+      /* ── hero aside ── */
+      .hero-aside { display: flex; flex-direction: column; gap: 18px; }
+      .info-card { padding: 24px; }
+      .info-card h2 { margin: 0 0 10px; font-size: 1.15rem; }
+
+      /* ── metric grid ── */
       .metric-grid {
         padding: 20px;
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 16px;
+        gap: 12px;
       }
       .metric {
-        padding: 18px;
+        padding: 16px 18px;
         border-radius: 18px;
-        background: rgba(15, 23, 42, 0.8);
+        background: rgba(10, 18, 36, 0.9);
+        border: 1px solid rgba(125, 211, 252, 0.12);
       }
-      .metric strong { display: block; font-size: 1.3rem; margin-top: 6px; }
+      .metric small { display: block; color: var(--muted); font-size: 0.8rem; margin-bottom: 4px; }
+      .metric strong { display: block; font-size: 1.28rem; font-weight: 800; }
+
+      /* ── section grid ── */
       .section-grid {
         display: grid;
-        grid-template-columns: 0.95fr 1.05fr;
+        grid-template-columns: 1.1fr 0.9fr;
         gap: 20px;
-        margin-top: 28px;
+        margin-top: 24px;
       }
+
+      /* ── feature list ── */
+      .feature-card { padding: 28px; }
+      .feature-card h2 { margin: 0 0 16px; font-size: 1.15rem; }
       .feature-list {
-        padding: 24px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
-      .feature-list ul { margin: 0; padding-left: 18px; color: var(--muted); line-height: 1.8; }
-      .footer-note {
-        margin-top: 28px;
+      .feature-list li {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
         color: var(--muted);
-        font-size: 0.92rem;
-        text-align: center;
+        font-size: 0.95rem;
+        line-height: 1.55;
       }
+      .feature-list li::before {
+        content: '';
+        flex-shrink: 0;
+        margin-top: 6px;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      /* ── quick-start card ── */
+      .quickstart { padding: 28px; }
+      .quickstart h2 { margin: 0 0 14px; font-size: 1.15rem; }
+      .creds-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+        margin-bottom: 16px;
+      }
+      .creds-table th {
+        text-align: left;
+        color: var(--muted);
+        font-weight: 600;
+        padding: 4px 8px 8px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .creds-table td {
+        padding: 8px 8px 4px 0;
+        color: var(--text);
+        vertical-align: middle;
+      }
+      .creds-table td:first-child { color: var(--muted); font-size: 0.82rem; white-space: nowrap; }
+      code {
+        font-family: "SF Mono", "Fira Code", monospace;
+        font-size: 0.83rem;
+        background: rgba(125, 211, 252, 0.1);
+        border: 1px solid rgba(125, 211, 252, 0.18);
+        border-radius: 6px;
+        padding: 2px 6px;
+        color: var(--accent);
+      }
+
+      /* ── stack pills ── */
+      .stack-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(125, 211, 252, 0.06);
+        color: var(--muted);
+        font-size: 0.83rem;
+        font-weight: 500;
+      }
+
+      /* ── footer ── */
+      .footer-note {
+        margin-top: 32px;
+        color: var(--muted);
+        font-size: 0.88rem;
+        text-align: center;
+        opacity: 0.7;
+      }
+      .footer-note a { color: var(--accent); text-decoration: none; }
+      .footer-note a:hover { text-decoration: underline; }
+
+      /* ── responsive ── */
       @media (max-width: 900px) {
         .hero, .section-grid { grid-template-columns: 1fr; }
       }
       @media (max-width: 640px) {
         .nav { flex-direction: column; align-items: flex-start; }
-        .hero-card { padding: 26px; }
+        .hero-card { padding: 28px 22px; }
         .metric-grid { grid-template-columns: 1fr; }
       }
     </style>
   </head>
   <body>
     <div class="shell">
+
+      <!-- nav -->
       <div class="nav">
         <div class="brand">
           <div class="brand-mark"></div>
@@ -158,11 +267,18 @@
         <div class="badge">www.techdeckPMO.com</div>
       </div>
 
+      <!-- hero -->
       <div class="hero">
-        <section class="hero-card">
-          <div class="eyebrow">AI-first PMO operations</div>
+        <section class="card hero-card">
+          <div class="eyebrow">Project operations · Field teams · AI-ready</div>
           <h1>Turn project delivery into a controlled revenue engine.</h1>
-          <p>Tech Deck PMO brings your budget, inventory, receivables, payment timelines, and proposal-close activities into one high-clarity operating view.</p>
+          <p>Tech Deck PMO brings budget, inventory, receivables, payment timelines, and proposal close-out activities into one high-clarity operating view built for field and commercial teams.</p>
+          <div class="stack-row">
+            <span class="pill">Flask + SQLite</span>
+            <span class="pill">Bootstrap 5</span>
+            <span class="pill">Receipt OCR</span>
+            <span class="pill">Role-based access</span>
+          </div>
           <div class="hero-actions">
             <a class="primary-btn" href="mailto:hello@techdeckpmo.com">Book a walkthrough</a>
             <a class="secondary-btn" href="https://github.com/solanofranco69-arch/Tech-Deck-PMO">View source</a>
@@ -170,51 +286,70 @@
         </section>
 
         <aside class="hero-aside">
-          <div class="cta-panel">
+          <div class="card info-card">
             <h2>Built for your operating rhythm</h2>
-            <p>Track project stage progress, cost exposure, payment schedules, and inventory usage from one polished dashboard.</p>
+            <p>Track project stage progress, cost exposure, payment schedules, and inventory usage from one polished dashboard — seeded with live demo data out of the box.</p>
           </div>
-          <div class="metric-grid">
+          <div class="card metric-grid">
             <div class="metric">
-              <span>Cost visibility</span>
-              <strong>$0.00</strong>
+              <small>Demo budget</small>
+              <strong>$24,000</strong>
             </div>
             <div class="metric">
-              <span>Revenue forecast</span>
-              <strong>$0.00</strong>
+              <small>Demo revenue</small>
+              <strong>$28,000</strong>
             </div>
             <div class="metric">
-              <span>Accounts receivable</span>
-              <strong>$0.00</strong>
+              <small>Accounts receivable</small>
+              <strong>$8,000</strong>
             </div>
             <div class="metric">
-              <span>Installments</span>
-              <strong>0 active</strong>
+              <small>Installments</small>
+              <strong>3 milestones</strong>
             </div>
           </div>
         </aside>
       </div>
 
+      <!-- bottom grid -->
       <div class="section-grid">
-        <section class="feature-list">
+        <section class="card feature-card">
           <h2>What you can manage</h2>
-          <ul>
-            <li>Proposal close-out checklists and approval paths</li>
-            <li>Budget and spend visibility across projects</li>
-            <li>Inventory adjustments and usage tracking</li>
-            <li>Receivables, payment methods, and scheduled installments</li>
-            <li>Client and account data captured directly in the workflow</li>
+          <ul class="feature-list">
+            <li>Project lifecycle from Proposal through Final Billing</li>
+            <li>Budget and revenue visibility across the portfolio</li>
+            <li>Inventory items — set, add, or remove by category and location</li>
+            <li>Per-worker expenditure log with date, category, and receipt photo</li>
+            <li>Receipt image OCR — vendor, date, and amount auto-parsed</li>
+            <li>Milestone-based payment schedules and discount tracking</li>
+            <li>Client contact and payment structure capture at Proposal Closing</li>
+            <li>Email or console-based secure password reset</li>
           </ul>
         </section>
 
-        <section class="cta-panel">
-          <h2>Launch with confidence</h2>
-          <p>Deploy the operational dashboard behind your brand and make the site your public front door for new opportunities, demos, and stakeholder updates.</p>
-          <p>This page is now ready to be served through GitHub Pages and connected to your custom domain.</p>
+        <section class="card quickstart">
+          <h2>Try it in 60 seconds</h2>
+          <p>Clone, install, and run — a demo project is seeded automatically.</p>
+          <table class="creds-table">
+            <thead>
+              <tr><th>Role</th><th>Email</th><th>Password</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Admin</td>   <td><code>admin@example.com</code></td>   <td><code>admin123</code></td></tr>
+              <tr><td>Finance</td> <td><code>finance@example.com</code></td> <td><code>finance123</code></td></tr>
+              <tr><td>Field</td>   <td><code>worker@example.com</code></td>  <td><code>worker123</code></td></tr>
+            </tbody>
+          </table>
+          <p style="margin-bottom:0;">This page is served via GitHub Pages and connected to the custom domain.</p>
         </section>
       </div>
 
-      <p class="footer-note">Tech Deck PMO • Public website preview • Ready for custom domain routing</p>
+      <p class="footer-note">
+        Tech Deck PMO &nbsp;·&nbsp; Public preview
+        &nbsp;·&nbsp; <a href="https://github.com/solanofranco69-arch/Tech-Deck-PMO">GitHub</a>
+        &nbsp;·&nbsp; MIT License
+      </p>
+
     </div>
   </body>
 </html>
