@@ -1,0 +1,30 @@
+{
+  "name": "Tech Deck PMO",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11-bullseye",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.debugpy",
+        "ms-python.black-formatter",
+        "ms-python.isort",
+        "ms-python.pylint",
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-sqlite"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true
+      }
+    }
+  },
+  "postCreateCommand": "pip install flask flask_sqlalchemy pillow pytesseract werkzeug && (apt-get install -y tesseract-ocr 2>/dev/null || true)",
+  "remoteUser": "vscode",
+  "forwardPorts": [5000],
+  "portsAttributes": {
+    "5000": {
+      "label": "Tech Deck PMO",
+      "onAutoForward": "openBrowser"
+    }
+  }
+}
