@@ -1,0 +1,36 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.terminal.activateEnvironment": true,
+  "editor.formatOnSave": true,
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.rulers": [88]
+  },
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true
+  },
+  "search.exclude": {
+    "**/__pycache__": true,
+    ".venv": true
+  },
+  "python.analysis.typeCheckingMode": "basic",
+
+  // Auto-fetch: VS Code checks GitHub every 30 s and shows a badge
+  // in the Source Control panel when my (Claude) pushes arrive.
+  // Click the ↓ arrow in the status bar to pull them in.
+  "git.autofetch": true,
+  "git.autofetchPeriod": 30,
+
+  // Show incoming/outgoing commits in the status bar at a glance
+  "git.showPushSuccessNotification": true,
+  "scm.showChangesSummary": true,
+
+  // Surface merge conflicts clearly in the editor
+  "merge-conflict.autoNavigateNextConflict.enabled": true,
+  "git.mergeEditor": true,
+
+  // Warn before switching branches with unsaved changes
+  "git.confirmSync": false,
+  "git.enableSmartCommit": false
+}
